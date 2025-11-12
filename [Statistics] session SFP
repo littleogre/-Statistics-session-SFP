@@ -1,51 +1,45 @@
 //@version=6
-indicator("[SFP Statistics]", "SFP Stats", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+// -----------------------------------------------------------------------------
+// Title:   SFP Statistics (Session Levels)
+// Author:  Nick (Modified w/ Statistics)
+// REFACTOR: Converted SFP engine to array-based state machine to fix stacked SFP bug.
+// ADD:     Added warning box if Chart TF > SFP TF, which disables visuals.
+// FIX:     Corrected all syntax/whitespace/indentation errors.
+// FIX 2:   Corrected table colors (Bearish=Red, Bullish=Green).
+// FIX 3:   Swapped table columns (Bullish is now Col 1, Bearish is Col 2).
+// -----------------------------------------------------------------------------
 
-// === IMPORTS ===
 import TradingView/ta/6 as ta
+
+indicator('[SFP Statistics]', '[Statistics] session SFP', overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
 
 // =============================================================================
 // INPUTS (SFP ENGINE)
 // =============================================================================
 
 string GRP_SFP_ENGINE = "SFP Engine Settings"
-pivotTimeframe = input.timeframe('W', "1. Level Timeframe", group = GRP_SFP_ENGINE,
-  tooltip="The timeframe used to find the major highs and lows (e.EXAMPLE: 'W' for weekly levels). This is the 'liquidity' level the SFP will target.")
-sfpTimeframe = input.timeframe('D', "2. SFP Timeframe", group = GRP_SFP_ENGINE,
-  tooltip="The timeframe used to find the SFP candle. **YOU MUST SET YOUR CHART TO THIS TIMEFRAME** for statistics to be collected.")
-sfpValidationWindow = input.int(0, "3. Confirmation Bars", group = GRP_SFP_ENGINE, minval = 0,
-  tooltip="The number of SFP TF bars *after* the SFP bar without invalidating the level. '0' confirms immediately on the SFP bar's close.")
-lookbackPeriod = input.int(10, "4. Level Lookback", group = GRP_SFP_ENGINE, minval = 1,
-  tooltip="The maximum age, in 'Level Timeframe' bars, that a high/low level is considered valid (e.g., 10 with a 'W' timeframe means look back at the last 10 weekly levels).")
+pivotTimeframe = input.timeframe('W', "1. Level Timeframe", group = GRP_SFP_ENGINE, tooltip="The timeframe used to find the major highs and lows (e.EXAMPLE: 'W' for weekly levels). This is the 'liquidity' level the SFP will target.")
+sfpTimeframe = input.timeframe('D', "2. SFP Timeframe", group = GRP_SFP_ENGINE, tooltip="The timeframe used to find the SFP candle. **YOU MUST SET YOUR CHART TO THIS TIMEFRAME** for statistics to be collected.")
+sfpValidationWindow = input.int(0, "3. Confirmation Bars", group = GRP_SFP_ENGINE, minval = 0, tooltip="The number of SFP TF bars *after* the SFP bar without invalidating the level. '0' confirms immediately on the SFP bar's close.")
+lookbackPeriod = input.int(10, "4. Level Lookback", group = GRP_SFP_ENGINE, minval = 1, tooltip="The maximum age, in 'Level Timeframe' bars, that a high/low level is considered valid (e.g., 10 with a 'W' timeframe means look back at the last 10 weekly levels).")
 
 string GRP_SFP_FILTERS = "SFP Engine Filters"
-enableWickCheck = input.bool(false, "Enable Wick % Filter", group = GRP_SFP_FILTERS,
-  tooltip="If checked, the SFP candle will only be considered valid if its rejection wick meets the minimum percentage requirement.")
-minWickPercent = input.float(40.0, "Min. Wick %", group = GRP_SFP_FILTERS, minval = 0.1, maxval = 100.0, step = 0.1,
-  tooltip="The rejection wick (e.g., upper wick for a bearish SFP) must be at least this percentage of the *entire* SFP bar's range (High to Low).")
+enableWickCheck = input.bool(false, "Enable Wick % Filter", group = GRP_SFP_FILTERS, tooltip="If checked, the SFP candle will only be considered valid if its rejection wick meets the minimum percentage requirement.")
+minWickPercent = input.float(40.0, "Min. Wick %", group = GRP_SFP_FILTERS, minval = 0.1, maxval = 100.0, step = 0.1, tooltip="The rejection wick (e.g., upper wick for a bearish SFP) must be at least this percentage of the *entire* SFP bar's range (High to Low).")
 
 string GRP_SFP_VISUALS = "SFP Engine Visuals (On Chart)"
-showPivotMarkers = input.bool(true, "Show 'x' Level Markers", group = GRP_SFP_VISUALS, 
-  tooltip="Toggles the 'x' markers on the 'Level Timeframe' highs/lows.")
-showSfpLines = input.bool(true, "Show SFP Lines", group = GRP_SFP_VISUALS,
-  tooltip="Toggles the horizontal line drawn from the level price to the SFP candle.")
-showSfpCandleBox = input.bool(false, "Show SFP Box", group = GRP_SFP_VISUALS,
-  tooltip="Toggles the background box for the SFP bar. NOTE: This box is only visible when the chart timeframe is *lower* than the 'SFP Timeframe'.")
-showConfirmationBoxes = input.bool(false, "Show Conf. Boxes", group = GRP_SFP_VISUALS,
-  tooltip="Toggles the background boxes for the confirmation bars. NOTE: These boxes are only visible when the chart timeframe is *lower* than the 'SFP Timeframe'.")
-enableSfpAlerts = input.bool(false, "Enable SFP Alerts", group = GRP_SFP_VISUALS,
-  tooltip="Enables an alert to fire once an SFP is fully confirmed (after the 'Confirmation Bars' have passed).")
+showPivotMarkers = input.bool(true, "Show 'x' Level Markers", group = GRP_SFP_VISUALS, tooltip="Toggles the 'x' markers on the 'Level Timeframe' highs/lows.")
+showSfpLines = input.bool(true, "Show SFP Lines", group = GRP_SFP_VISUALS, tooltip="Toggles the horizontal line drawn from the level price to the SFP candle.")
+showSfpCandleBox = input.bool(false, "Show SFP Box", group = GRP_SFP_VISUALS, tooltip="Toggles the background box for the SFP bar. NOTE: This box is only visible when the chart timeframe is *lower* than the 'SFP Timeframe'.")
+showConfirmationBoxes = input.bool(false, "Show Conf. Boxes", group = GRP_SFP_VISUALS, tooltip="Toggles the background boxes for the confirmation bars. NOTE: These boxes are only visible when the chart timeframe is *lower* than the 'SFP Timeframe'.")
+enableSfpAlerts = input.bool(false, "Enable SFP Alerts", group = GRP_SFP_VISUALS, tooltip="Enables an alert to fire once an SFP is fully confirmed (after the 'Confirmation Bars' have passed).")
 
 // --- COLOR SETTINGS UPDATED HERE ---
 string GRP_COLORS = "SFP Engine Colors"
-bearLabelColor = input.color(color.red, "Bearish SFP Label/Marker", group = GRP_COLORS,
-  tooltip="Sets the color for bearish SFP labels and level markers.")
-bullLabelColor = input.color(color.green, "Bullish SFP Label/Marker", group = GRP_COLORS,
-  tooltip="Sets the color for bullish SFP labels and level markers.")
-bearLineColor = input.color(color.red, "Bearish SFP Line", group = GRP_COLORS,
-  tooltip="Sets the color for the horizontal line on bearish SFPs.")
-bullLineColor = input.color(color.green, "Bullish SFP Line", group = GRP_COLORS,
-  tooltip="Sets the color for the horizontal line on bullish SFPs.")
+bearLabelColor = input.color(color.red, "Bearish SFP Label/Marker", group = GRP_COLORS, tooltip="Sets the color for bearish SFP labels and level markers.")
+bullLabelColor = input.color(color.green, "Bullish SFP Label/Marker", group = GRP_COLORS, tooltip="Sets the color for bullish SFP labels and level markers.")
+bearLineColor = input.color(color.red, "Bearish SFP Line", group = GRP_COLORS, tooltip="Sets the color for the horizontal line on bearish SFPs.")
+bullLineColor = input.color(color.green, "Bullish SFP Line", group = GRP_COLORS, tooltip="Sets the color for the horizontal line on bullish SFPs.")
 bearLabelTextColor = input.color(color.white, "Bearish Label Text", group = GRP_COLORS)
 bullLabelTextColor = input.color(color.white, "Bullish Label Text", group = GRP_COLORS)
 bearSfpBarBoxColor = input.color(color.red, "SFP Box Bearish", group = GRP_COLORS)
@@ -61,21 +55,21 @@ bullConfBoxColor = input.color(color.green, "Conf. Box Bullish", group = GRP_COL
 // --- General Settings ---
 var string GRP_GENERAL = "Statistics Module Settings"
 i_hourlyTimezone = input.string("America/New_York", "Timezone (For Tables)", options = [
-     // Americas (North)
-     "America/Los_Angeles", "America/Vancouver", "America/Phoenix", "America/Denver", "America/Chicago", "America/Mexico_City", "America/New_York", "America/Toronto", 
-     // Americas (South)
-     "America/Bogota", "America/Lima", "America/Caracas", "America/Santiago", "America/Buenos_Aires", "America/Sao_Paulo",
-     // Europe
-     "Europe/London", "Europe/Dublin", "Europe/Lisbon", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome", "Europe/Stockholm", "Europe/Zurich", "Europe/Athens", "Europe/Helsinki", "Europe/Amsterdam", "Europe/Oslo", "Europe/Warsaw",
-     // Europe/Middle East
-     "Europe/Moscow", "Europe/Istanbul", "Asia/Jerusalem", "Asia/Dubai", "Asia/Tehran", "Asia/Riyadh",
-     // Asia/Pacific
-     "Asia/Karachi", "Asia/Kolkata", "Asia/Bangkok", "Asia/Ho_Chi_Minh", "Asia/Singapore", "Asia/Hong_Kong", "Asia/Shanghai", "Asia/Taipei", "Asia/Seoul", "Asia/Tokyo", 
-     // Australia/Pacific
-     "Australia/Perth", "Australia/Sydney", "Australia/Adelaide", "Australia/Brisbane", "Pacific/Auckland", "Pacific/Honolulu",
-     // UTC
-     "Etc/UTC"
-     ], group = GRP_GENERAL, tooltip = "Selects the reference timezone. Used for the Custom and Session tables to correctly handle Daylight Saving Time (DST) shifts.") 
+      // Americas (North)
+      "America/Los_Angeles", "America/Vancouver", "America/Phoenix", "America/Denver", "America/Chicago", "America/Mexico_City", "America/New_York", "America/Toronto", 
+      // Americas (South)
+      "America/Bogota", "America/Lima", "America/Caracas", "America/Santiago", "America/Buenos_Aires", "America/Sao_Paulo",
+      // Europe
+      "Europe/London", "Europe/Dublin", "Europe/Lisbon", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome", "Europe/Stockholm", "Europe/Zurich", "Europe/Athens", "Europe/Helsinki", "Europe/Amsterdam", "Europe/Oslo", "Europe/Warsaw",
+      // Europe/Middle East
+      "Europe/Moscow", "Europe/Istanbul", "Asia/Jerusalem", "Asia/Dubai", "Asia/Tehran", "Asia/Riyadh",
+      // Asia/Pacific
+      "Asia/Karachi", "Asia/Kolkata", "Asia/Bangkok", "Asia/Ho_Chi_Minh", "Asia/Singapore", "Asia/Hong_Kong", "Asia/Shanghai", "Asia/Taipei", "Asia/Seoul", "Asia/Tokyo", 
+      // Australia/Pacific
+      "Australia/Perth", "Australia/Sydney", "Australia/Adelaide", "Australia/Brisbane", "Pacific/Auckland", "Pacific/Honolulu",
+      // UTC
+      "Etc/UTC"
+      ], group = GRP_GENERAL, tooltip = "Selects the reference timezone. Used for the Custom and Session tables to correctly handle Daylight Saving Time (DST) shifts.") 
 i_dividerColor = input.color(color.new(color.white, 0), "Divider Color (All Modules)", group = GRP_GENERAL, tooltip = "Selects the color for all enabled dividers.") 
 i_showDividerLabels = input.bool(true, "Show Divider Labels", group = GRP_GENERAL, tooltip = "Adds text labels (e.g., 'Weekly', 'Session Start') to the bottom of all enabled dividers.")
 i_highlightActiveTimezone = input.bool(true, "Fade Inactive STD/DST Column", group = GRP_GENERAL, tooltip = "If checked, the text of the inactive time column (STD or DST) will be 'faded' (set to gray) in the Custom and Session tables.") 
@@ -129,6 +123,25 @@ i_limitRows_S = input.bool(true, "Limit Table Rows", group = GRP_SESS, tooltip =
 i_maxRows_S = input.int(20, "Max Table Rows", minval = 1, group = GRP_SESS, tooltip = "Sets the maximum number of rows to display.")
 
 
+// =============================================================================
+// PENDING SFP TYPE (NEW)
+// =============================================================================
+// This custom 'type' will store the state for EACH pending SFP.
+type PendingSFP
+    int barCounter = 0
+    float lockedPivotPrice = na
+    int lockedPivotTime = na
+    int initialSfpBarTime = na     // Time of the SFP bar (for stats hook)
+    int sfpChartBarTime = na
+    float sfpExtremePrice = na       // The high/low of the SFP candle
+    int sfpExtremeTime = na          // The time of the SFP candle
+    float sfpBarOpen = na
+    float sfpBarClose = na
+    float sfpBarOppositePrice = na   // The 'low' for a bear SFP, 'high' for bull
+    box sfpBox = na
+    array<box> confBoxes = na       // Default to 'na', initialized in .new()
+
+
 // === CONSTANTS ===
 int MAX_LOOKBACK = 500
 int SECS_IN_DAY = 86400
@@ -141,7 +154,10 @@ int chartTfMs = chartSecs * 1000
 
 // Main check: The chart MUST be on the SFP Timeframe for the stats to work.
 int sfpTfSecs = timeframe.in_seconds(sfpTimeframe) // Get SFP TF in seconds
-bool isChartOnSfpTF = chartSecs == sfpTfSecs       // Compare seconds, NOT strings
+bool isChartOnSfpTF = chartSecs == sfpTfSecs      // Compare seconds, NOT strings
+
+// Check if any stat module is enabled by the user
+bool anyStatModuleEnabled = i_enableDailyLogic or i_enableWOMLogic or i_enableMOYLogic or i_enableCustomLogic or i_enableSessionLogic
 
 // Statistics logic is enabled by user inputs AND the chart being on the correct timeframe
 bool runDailyLogic = i_enableDailyLogic and (timeframe.isdaily and timeframe.multiplier == 1)
@@ -159,6 +175,7 @@ bool is_new_sfp_bar = isHistoryCollectionActive and nz(ta.change(time(sfpTimefra
 var int pivot_tf_bar_counter = 0
 bool isChartTF_LTE_sfpTF = chartSecs <= sfpTfSecs // Use seconds
 bool isChartTF_LT_sfpTF = chartSecs < sfpTfSecs  // Use seconds
+bool isChartTF_GT_sfpTF = chartSecs > sfpTfSecs  // *** NEW: Check for visuals warning ***
 
 
 // === HISTORY ARRAYS (STATISTICS) ===
@@ -186,34 +203,11 @@ var array<int> sfp_pivot_low_times = array.new_int()
 var array<int> sfp_pivot_low_age = array.new_int()
 var array<bool> sfp_pivot_high_remove_flags = array.new_bool()
 var array<bool> sfp_pivot_low_remove_flags = array.new_bool()
-// --- Bearish SFP State ---
-var bool bearSfp_isActive = false
-var int bearSfp_barCounter = 0
-var float bearSfp_lockedPivotPrice = na
-var int bearSfp_lockedPivotTime = na
-var int bearSfp_initialSfpBarTime = na // This is the time we use for stats
-var int bearSfp_sfpChartBarTime = na
-var float bearSfp_sfpExtremeHighPrice = na
-var int bearSfp_sfpExtremeHighTime = na
-var float bearSfp_sfpBarOpen = na
-var float bearSfp_sfpBarClose = na
-var float bearSfp_sfpBarLow = na
-var box bearSfp_sfpBox = na
-var box[] bearSfp_confBoxes = array.new_box()
-// --- Bullish SFP State ---
-var bool bullSfp_isActive = false
-var int bullSfp_barCounter = 0
-var float bullSfp_lockedPivotPrice = na
-var int bullSfp_lockedPivotTime = na
-var int bullSfp_initialSfpBarTime = na // This is the time we use for stats
-var int bullSfp_sfpChartBarTime = na
-var float bullSfp_sfpExtremeLowPrice = na
-var int bullSfp_sfpExtremeLowTime = na
-var float bullSfp_sfpBarOpen = na
-var float bullSfp_sfpBarClose = na
-var float bullSfp_sfpBarHigh = na
-var box bullSfp_sfpBox = na
-var box[] bullSfp_confBoxes = array.new_box()
+
+// --- SFP State Machine (REFACTORED) ---
+var array<PendingSFP> pendingBearSFPs = array.new<PendingSFP>()
+var array<PendingSFP> pendingBullSFPs = array.new<PendingSFP>()
+
 // --- Other ---
 float atrValue = ta.atr(14)
 float yOffset = atrValue * 0.1
@@ -521,6 +515,7 @@ f_pushBullishSfpToStats(int sfpTime) =>
                 array.shift(offsetHistory_S)
 
 // --- SFP EXECUTION LOGIC (Runs on SFP TF) ---
+// --- REFACTORED SFP LOGIC ---
 if is_new_sfp_bar and not na(sfp_c)
 
     string ticker_str = syminfo.ticker
@@ -531,111 +526,130 @@ if is_new_sfp_bar and not na(sfp_c)
     string bullLabelText = str.format("Bullish SFP {0}\nLevel: {1}\nSFP: {2} | Conf: {3}", ticker_str, pivotTF_str, sfpTF_str, conf_str)
     
     // --- BEARISH SFP LOGIC ---
-    if bearSfp_isActive
-        if sfp_c >= bearSfp_lockedPivotPrice
-            // Invalidation
-            box.delete(bearSfp_sfpBox)
-            for confBox in bearSfp_confBoxes
-                box.delete(confBox)
-            array.clear(bearSfp_confBoxes)
-            bearSfp_isActive := false, bearSfp_barCounter := 0, bearSfp_lockedPivotPrice := na
-            bearSfp_lockedPivotTime := na, bearSfp_initialSfpBarTime := na, bearSfp_sfpChartBarTime := na, bearSfp_sfpExtremeHighPrice := na, bearSfp_sfpExtremeHighTime := na, bearSfp_sfpBarOpen := na, bearSfp_sfpBarClose := na, bearSfp_sfpBarLow := na
-            bearSfp_sfpBox := na
-        else
-            // Confirmation window
-            bearSfp_barCounter += 1
-            if showConfirmationBoxes and isChartTF_LT_sfpTF and bearSfp_barCounter >= 1 and bearSfp_barCounter <= sfpValidationWindow and not na(sfp_h)
-                box confBox = box.new(sfp_ht, sfp_h, sfp_ht + sfpTfMs - chartTfMs, sfp_l,
-                 bgcolor = bearConfBoxColor, border_color = color(na), xloc = xloc.bar_time)
-                array.push(bearSfp_confBoxes, confBox)
+    
+    // 1. UPDATE PENDING BEARISH SFPS
+    if array.size(pendingBearSFPs) > 0
+        for i = array.size(pendingBearSFPs) - 1 to 0
+            PendingSFP pendingSFP = array.get(pendingBearSFPs, i)
+
+            // A. Check for Invalidation (if price closes back above the level)
+            if sfp_c >= pendingSFP.lockedPivotPrice
+                box.delete(pendingSFP.sfpBox)
+                for confBox in pendingSFP.confBoxes
+                    box.delete(confBox)
+                array.remove(pendingBearSFPs, i) // Stop tracking this SFP
+                continue // Go to the next pending SFP in our loop
+
+            // B. Not invalidated, so increment confirmation bar counter
+            pendingSFP.barCounter += 1
             
-            if bearSfp_barCounter >= sfpValidationWindow
-                // *** CONFIRMED BEARISH SFP (N-BAR) ***
-                bool wickCheckPassed = f_wickCheck(true, bearSfp_sfpBarOpen, bearSfp_sfpExtremeHighPrice, bearSfp_sfpBarLow, bearSfp_sfpBarClose)
+            // Draw confirmation boxes if enabled
+            if showConfirmationBoxes and isChartTF_LT_sfpTF and pendingSFP.barCounter >= 1 and pendingSFP.barCounter <= sfpValidationWindow and not na(sfp_h)
+                box confBox = box.new(sfp_ht, sfp_h, sfp_ht + sfpTfMs - chartTfMs, sfp_l,
+                     bgcolor = bearConfBoxColor, border_color = color(na), xloc = xloc.bar_time)
+                array.push(pendingSFP.confBoxes, confBox)
+            
+            // C. Check for Final Confirmation (if counter is high enough)
+            if pendingSFP.barCounter >= sfpValidationWindow
+                // This SFP is now fully confirmed, run the final wick check
+                bool wickCheckPassed = f_wickCheck(true, pendingSFP.sfpBarOpen, pendingSFP.sfpExtremePrice, pendingSFP.sfpBarOppositePrice, pendingSFP.sfpBarClose)
                 
                 if wickCheckPassed
+                    // PASSED: Draw the label and line
                     if isChartTF_LTE_sfpTF
                         if showSfpLines
-                            line.new(bearSfp_lockedPivotTime, bearSfp_lockedPivotPrice, bearSfp_sfpChartBarTime, bearSfp_lockedPivotPrice, xloc=xloc.bar_time, color=bearLineColor, width=2, style=line.style_solid)
-                        label.new(bearSfp_sfpExtremeHighTime, bearSfp_sfpExtremeHighPrice + yOffset, text=bearLabelText, style=label.style_label_down, color=bearLabelColor, textcolor=bearLabelTextColor, xloc=xloc.bar_time, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+                            line.new(pendingSFP.lockedPivotTime, pendingSFP.lockedPivotPrice, pendingSFP.sfpChartBarTime, pendingSFP.lockedPivotPrice, xloc=xloc.bar_time, color=bearLineColor, width=2, style=line.style_solid)
+                        label.new(pendingSFP.sfpExtremeTime, pendingSFP.sfpExtremePrice + yOffset, text=bearLabelText, style=label.style_label_down, color=bearLabelColor, textcolor=bearLabelTextColor, xloc=xloc.bar_time, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+                    
+                    if enableSfpAlerts
+                        alert(bearLabelText, alert.freq_once_per_bar_close)
+                    
+                    // --- STATISTICS HOOK ---
+                    if isChartOnSfpTF
+                        f_pushBearishSfpToStats(pendingSFP.initialSfpBarTime)
+
+                // SFP is done (whether it passed or failed), clean up boxes and remove from tracking
+                box.delete(pendingSFP.sfpBox)
+                for confBox in pendingSFP.confBoxes
+                    box.delete(confBox)
+                array.remove(pendingBearSFPs, i)
+            
+            else
+                // SFP is still pending, update its state in the array
+                array.set(pendingBearSFPs, i, pendingSFP)
+
+
+    // 2. DETECT NEW BEARISH SFPS
+    // Second, loop through all pivots to find NEW SFPs on this bar.
+    if array.size(sfp_pivot_high_prices) > 0
+        for i = array.size(sfp_pivot_high_prices) - 1 to 0
+            float pivot_price = array.get(sfp_pivot_high_prices, i)
+            
+            // Main SFP detection condition
+            if sfp_h > pivot_price and sfp_c < pivot_price
+                
+                // Found a potential SFP. Run wick check *first*.
+                bool wickCheckPassed = f_wickCheck(true, sfp_o, sfp_h, sfp_l, sfp_c)
+                
+                if not wickCheckPassed
+                    continue // Wick check failed, ignore this pivot and move to the next
+
+                // --- Wick check passed, so this is a VALID SFP ---
+                int pivot_time = array.get(sfp_pivot_high_times, i)
+                int firstCrossTime = findFirstCrossTime(sfp_ht, pivot_price, true)
+                int chartBarTimeToUse = na(firstCrossTime) ? time[1] : firstCrossTime
+
+                if sfpValidationWindow == 0
+                    // A. CONFIRM IMMEDIATELY (no validation window)
+                    if isChartTF_LTE_sfpTF
+                        if showSfpLines
+                            line.new(pivot_time, pivot_price, chartBarTimeToUse, pivot_price, xloc=xloc.bar_time, color=bearLineColor, width=2, style=line.style_solid)
+                        label.new(sfp_ht_extreme_chart, sfp_h + yOffset, text=bearLabelText, style=label.style_label_down, color=bearLabelColor, textcolor=bearLabelTextColor, xloc=xloc.bar_time, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+                        
+                        if showSfpCandleBox and isChartTF_LT_sfpTF
+                            box.new(sfp_ht, sfp_h, sfp_ht + sfpTfMs - chartTfMs, sfp_l,
+                             bgcolor = bearSfpBarBoxColor, border_color = color(na), xloc = xloc.bar_time)
                     
                     if enableSfpAlerts
                         alert(bearLabelText, alert.freq_once_per_bar_close)
 
                     // --- STATISTICS HOOK ---
-                    if isChartOnSfpTF // Only log stats if chart is on the SFP TF
-                        f_pushBearishSfpToStats(bearSfp_initialSfpBarTime)
-
+                    if isChartOnSfpTF
+                        f_pushBearishSfpToStats(sfp_ht)
+                
                 else
-                    // Failed wick check
-                    box.delete(bearSfp_sfpBox)
-                    for confBox in bearSfp_confBoxes
-                        box.delete(confBox)
-                    array.clear(bearSfp_confBoxes)
-
-                // Reset state
-                bearSfp_isActive := false, bearSfp_barCounter := 0, bearSfp_lockedPivotPrice := na
-                bearSfp_lockedPivotTime := na, bearSfp_initialSfpBarTime := na, bearSfp_sfpChartBarTime := na, bearSfp_sfpExtremeHighPrice := na, bearSfp_sfpExtremeHighTime := na, bearSfp_sfpBarOpen := na, bearSfp_sfpBarClose := na, bearSfp_sfpBarLow := na
-
-    // Check for new SFP
-    if array.size(sfp_pivot_high_prices) > 0
-        for i = array.size(sfp_pivot_high_prices) - 1 to 0
-            float pivot_price = array.get(sfp_pivot_high_prices, i)
-            
-            if not bearSfp_isActive and sfp_h > pivot_price and sfp_c < pivot_price
-                // Found a potential SFP
-                int pivot_time = array.get(sfp_pivot_high_times, i)
-                int firstCrossTime = findFirstCrossTime(sfp_ht, pivot_price, true)
-                int chartBarTimeToUse = na(firstCrossTime) ? time[1] : firstCrossTime
-                bool wickCheckPassed = f_wickCheck(true, sfp_o, sfp_h, sfp_l, sfp_c)
-
-                if sfpValidationWindow == 0
-                    // *** CONFIRMED BEARISH SFP (0-BAR) ***
-                    if wickCheckPassed
-                        if isChartTF_LTE_sfpTF
-                            if showSfpLines
-                                line.new(pivot_time, pivot_price, chartBarTimeToUse, pivot_price, xloc=xloc.bar_time, color=bearLineColor, width=2, style=line.style_solid)
-                            label.new(sfp_ht_extreme_chart, sfp_h + yOffset, text=bearLabelText, style=label.style_label_down, color=bearLabelColor, textcolor=bearLabelTextColor, xloc=xloc.bar_time, yloc=yloc.price, size=size.normal, textalign=text.align_left)
-                            
-                            if showSfpCandleBox and isChartTF_LT_sfpTF
-                                box.new(sfp_ht, sfp_h, sfp_ht + sfpTfMs - chartTfMs, sfp_l,
-                                 bgcolor = bearSfpBarBoxColor, border_color = color(na), xloc = xloc.bar_time)
-
-                        if enableSfpAlerts
-                            alert(bearLabelText, alert.freq_once_per_bar_close)
-
-                        // --- STATISTICS HOOK ---
-                        if isChartOnSfpTF // Only log stats if chart is on the SFP TF
-                            f_pushBearishSfpToStats(sfp_ht)
-
-                else if wickCheckPassed
-                    // Start N-Bar confirmation process
-                    bearSfp_isActive := true, bearSfp_barCounter := 0
-                    bearSfp_lockedPivotPrice := pivot_price, bearSfp_lockedPivotTime := pivot_time
-                    bearSfp_initialSfpBarTime := sfp_ht // This is the SFP bar time
-                    bearSfp_sfpChartBarTime := chartBarTimeToUse
-                    bearSfp_sfpExtremeHighPrice := sfp_h
-                    bearSfp_sfpExtremeHighTime := sfp_ht_extreme_chart
-                    bearSfp_sfpBarOpen := sfp_o
-                    bearSfp_sfpBarClose := sfp_c
-                    bearSfp_sfpBarLow := sfp_l
-                    
-                    box.delete(bearSfp_sfpBox)
-                    for confBox in bearSfp_confBoxes
-                        box.delete(confBox)
-                    array.clear(bearSfp_confBoxes)
+                    // B. ADD TO PENDING LIST (validation window > 0)
+                    PendingSFP newPendingSFP = PendingSFP.new()
+                    newPendingSFP.confBoxes := array.new_box() // *** FIX: Initialize the new array here.
+                    newPendingSFP.barCounter := 0
+                    newPendingSFP.lockedPivotPrice := pivot_price
+                    newPendingSFP.lockedPivotTime := pivot_time
+                    newPendingSFP.initialSfpBarTime := sfp_ht // Store SFP bar time for stats
+                    newPendingSFP.sfpChartBarTime := chartBarTimeToUse
+                    newPendingSFP.sfpExtremePrice := sfp_h
+                    newPendingSFP.sfpExtremeTime := sfp_ht_extreme_chart
+                    newPendingSFP.sfpBarOpen := sfp_o
+                    newPendingSFP.sfpBarClose := sfp_c
+                    newPendingSFP.sfpBarOppositePrice := sfp_l
                     
                     if showSfpCandleBox and isChartTF_LT_sfpTF
-                        bearSfp_sfpBox := box.new(sfp_ht, sfp_h, sfp_ht + sfpTfMs - chartTfMs, sfp_l,
+                        newPendingSFP.sfpBox := box.new(sfp_ht, sfp_h, sfp_ht + sfpTfMs - chartTfMs, sfp_l,
                          bgcolor = bearSfpBarBoxColor, border_color = color(na), xloc = xloc.bar_time)
-                        
-                array.set(sfp_pivot_high_remove_flags, i, true) // Mark level as used
-                break // Stop checking levels
-
+                    
+                    array.push(pendingBearSFPs, newPendingSFP) // Add to our tracking list
+                
+                // Mark this pivot for removal so it doesn't get SFP'd again
+                array.set(sfp_pivot_high_remove_flags, i, true)
+                
+                // *** CRUCIAL: The 'break' statement is GONE ***
+                // The loop will now continue to check older pivots on the same bar.
+            
             else if sfp_c >= pivot_price
-                array.set(sfp_pivot_high_remove_flags, i, true) // Mark level as invalidated
+                // This pivot was not SFP'd, and price closed above it.
+                // Mark it for removal as it's no longer valid liquidity.
+                array.set(sfp_pivot_high_remove_flags, i, true)
 
-    // Clean up used/invalidated high levels
+    // This part remains the same:
     if array.size(sfp_pivot_high_prices) > 0
         for i = array.size(sfp_pivot_high_prices) - 1 to 0
             if array.get(sfp_pivot_high_remove_flags, i)
@@ -644,111 +658,123 @@ if is_new_sfp_bar and not na(sfp_c)
 
 
     // --- BULLISH SFP LOGIC ---
-    if bullSfp_isActive
-        if sfp_c <= bullSfp_lockedPivotPrice
-            // Invalidation
-            box.delete(bullSfp_sfpBox)
-            for confBox in bullSfp_confBoxes
-                box.delete(confBox)
-            array.clear(bullSfp_confBoxes)
-            bullSfp_isActive := false, bullSfp_barCounter := 0, bullSfp_lockedPivotPrice := na
-            bullSfp_lockedPivotTime := na, bullSfp_initialSfpBarTime := na, bullSfp_sfpChartBarTime := na, bullSfp_sfpExtremeLowPrice := na, bullSfp_sfpExtremeLowTime := na, bullSfp_sfpBarOpen := na, bullSfp_sfpBarClose := na, bullSfp_sfpBarHigh := na
-            bullSfp_sfpBox := na
-        else
-            // Confirmation window
-            bullSfp_barCounter += 1
-            if showConfirmationBoxes and isChartTF_LT_sfpTF and bullSfp_barCounter >= 1 and bullSfp_barCounter <= sfpValidationWindow and not na(sfp_h)
+
+    // 1. UPDATE PENDING BULLISH SFPS
+    if array.size(pendingBullSFPs) > 0
+        for i = array.size(pendingBullSFPs) - 1 to 0
+            PendingSFP pendingSFP = array.get(pendingBullSFPs, i)
+
+            // A. Check for Invalidation
+            if sfp_c <= pendingSFP.lockedPivotPrice
+                box.delete(pendingSFP.sfpBox)
+                for confBox in pendingSFP.confBoxes
+                    box.delete(confBox)
+                array.remove(pendingBullSFPs, i)
+                continue 
+
+            // B. Increment counter
+            pendingSFP.barCounter += 1
+            
+            if showConfirmationBoxes and isChartTF_LT_sfpTF and pendingSFP.barCounter >= 1 and pendingSFP.barCounter <= sfpValidationWindow and not na(sfp_h)
                 box confBox = box.new(sfp_ht, sfp_h, sfp_ht + sfpTfMs - chartTfMs, sfp_l,
-                 bgcolor = bullConfBoxColor, border_color = color(na), xloc = xloc.bar_time)
-                array.push(bullSfp_confBoxes, confBox)
-
-            if bullSfp_barCounter >= sfpValidationWindow
-                // *** CONFIRMED BULLISH SFP (N-BAR) ***
-                bool wickCheckPassed = f_wickCheck(false, bullSfp_sfpBarOpen, bullSfp_sfpBarHigh, bullSfp_sfpExtremeLowPrice, bullSfp_sfpBarClose)
-
+                     bgcolor = bullConfBoxColor, border_color = color(na), xloc = xloc.bar_time)
+                array.push(pendingSFP.confBoxes, confBox)
+            
+            // C. Check for Final Confirmation
+            if pendingSFP.barCounter >= sfpValidationWindow
+                bool wickCheckPassed = f_wickCheck(false, pendingSFP.sfpBarOpen, pendingSFP.sfpBarOppositePrice, pendingSFP.sfpExtremePrice, pendingSFP.sfpBarClose)
+                
                 if wickCheckPassed
                     if isChartTF_LTE_sfpTF
                         if showSfpLines
-                            line.new(bullSfp_lockedPivotTime, bullSfp_lockedPivotPrice, bullSfp_sfpChartBarTime, bullSfp_lockedPivotPrice, xloc=xloc.bar_time, color=bullLineColor, width=2, style=line.style_solid)
-                        label.new(bullSfp_sfpExtremeLowTime, bullSfp_sfpExtremeLowPrice - yOffset, text=bullLabelText, style=label.style_label_up, color=bullLabelColor, textcolor=bullLabelTextColor, xloc=xloc.bar_time, yloc=yloc.price, size=size.normal, textalign=text.align_left)
-
+                            line.new(pendingSFP.lockedPivotTime, pendingSFP.lockedPivotPrice, pendingSFP.sfpChartBarTime, pendingSFP.lockedPivotPrice, xloc=xloc.bar_time, color=bullLineColor, width=2, style=line.style_solid)
+                        label.new(pendingSFP.sfpExtremeTime, pendingSFP.sfpExtremePrice - yOffset, text=bullLabelText, style=label.style_label_up, color=bullLabelColor, textcolor=bullLabelTextColor, xloc=xloc.bar_time, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+                    
                     if enableSfpAlerts
                         alert(bullLabelText, alert.freq_once_per_bar_close)
 
                     // --- STATISTICS HOOK ---
-                    if isChartOnSfpTF // Only log stats if chart is on the SFP TF
-                        f_pushBullishSfpToStats(bullSfp_initialSfpBarTime)
-
-                else
-                    // Failed wick check
-                    box.delete(bullSfp_sfpBox)
-                    for confBox in bullSfp_confBoxes
-                        box.delete(confBox)
-                    array.clear(bullSfp_confBoxes)
+                    if isChartOnSfpTF
+                        f_pushBullishSfpToStats(pendingSFP.initialSfpBarTime)
                 
-                // Reset state
-                bullSfp_isActive := false, bullSfp_barCounter := 0, bullSfp_lockedPivotPrice := na
-                bullSfp_lockedPivotTime := na, bullSfp_initialSfpBarTime := na, bullSfp_sfpChartBarTime := na, bullSfp_sfpExtremeLowPrice := na, bullSfp_sfpExtremeLowTime := na, bullSfp_sfpBarOpen := na, bullSfp_sfpBarClose := na, bullSfp_sfpBarHigh := na
-    
-    // Check for new SFP
+                box.delete(pendingSFP.sfpBox)
+                for confBox in pendingSFP.confBoxes
+                    box.delete(confBox)
+                array.remove(pendingBullSFPs, i)
+            
+            else
+                array.set(pendingBullSFPs, i, pendingSFP)
+
+
+    // 2. DETECT NEW BULLISH SFPS
     if array.size(sfp_pivot_low_prices) > 0
         for i = array.size(sfp_pivot_low_prices) - 1 to 0
             float pivot_price = array.get(sfp_pivot_low_prices, i)
+            
+            // Main SFP detection condition
+            if sfp_l < pivot_price and sfp_c > pivot_price
+                
+                // Found a potential SFP. Run wick check *first*.
+                bool wickCheckPassed = f_wickCheck(false, sfp_o, sfp_h, sfp_l, sfp_c)
+                
+                if not wickCheckPassed
+                    continue // Wick check failed, ignore this pivot and move to the next
 
-            if not bullSfp_isActive and sfp_l < pivot_price and sfp_c > pivot_price
-                // Found a potential SFP
+                // --- Wick check passed, so this is a VALID SFP ---
                 int pivot_time = array.get(sfp_pivot_low_times, i)
                 int firstCrossTime = findFirstCrossTime(sfp_lt, pivot_price, false)
                 int chartBarTimeToUse = na(firstCrossTime) ? time[1] : firstCrossTime
-                bool wickCheckPassed = f_wickCheck(false, sfp_o, sfp_h, sfp_l, sfp_c)
 
                 if sfpValidationWindow == 0
-                    // *** CONFIRMED BULLISH SFP (0-BAR) ***
-                    if wickCheckPassed
-                        if isChartTF_LTE_sfpTF
-                            if showSfpLines
-                                line.new(pivot_time, pivot_price, chartBarTimeToUse, pivot_price, xloc=xloc.bar_time, color=bullLineColor, width=2, style=line.style_solid)
-                            label.new(sfp_lt_extreme_chart, sfp_l - yOffset, text=bullLabelText, style=label.style_label_up, color=bullLabelColor, textcolor=bullLabelTextColor, xloc=xloc.bar_time, yloc=yloc.price, size=size.normal, textalign=text.align_left)
-                            
-                            if showSfpCandleBox and isChartTF_LT_sfpTF
-                                box.new(sfp_lt, sfp_h, sfp_lt + sfpTfMs - chartTfMs, sfp_l,
-                                 bgcolor = bullSfpBarBoxColor, border_color = color(na), xloc = xloc.bar_time)
-
-                        if enableSfpAlerts
-                            alert(bullLabelText, alert.freq_once_per_bar_close)
-
-                        // --- STATISTICS HOOK ---
-                        if isChartOnSfpTF // Only log stats if chart is on the SFP TF
-                            f_pushBullishSfpToStats(sfp_lt)
-
-                else if wickCheckPassed
-                    // Start N-Bar confirmation process
-                    bullSfp_isActive := true, bullSfp_barCounter := 0
-                    bullSfp_lockedPivotPrice := pivot_price, bullSfp_lockedPivotTime := pivot_time
-                    bullSfp_initialSfpBarTime := sfp_lt // This is the SFP bar time
-                    bullSfp_sfpChartBarTime := chartBarTimeToUse
-                    bullSfp_sfpExtremeLowPrice := sfp_l
-                    bullSfp_sfpExtremeLowTime := sfp_lt_extreme_chart
-                    bullSfp_sfpBarOpen := sfp_o
-                    bullSfp_sfpBarClose := sfp_c
-                    bullSfp_sfpBarHigh := sfp_h
+                    // A. CONFIRM IMMEDIATELY (no validation window)
+                    if isChartTF_LTE_sfpTF
+                        if showSfpLines
+                            line.new(pivot_time, pivot_price, chartBarTimeToUse, pivot_price, xloc=xloc.bar_time, color=bullLineColor, width=2, style=line.style_solid)
+                        label.new(sfp_lt_extreme_chart, sfp_l - yOffset, text=bullLabelText, style=label.style_label_up, color=bullLabelColor, textcolor=bullLabelTextColor, xloc=xloc.bar_time, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+                        
+                        if showSfpCandleBox and isChartTF_LT_sfpTF
+                            box.new(sfp_lt, sfp_h, sfp_lt + sfpTfMs - chartTfMs, sfp_l,
+                             bgcolor = bullSfpBarBoxColor, border_color = color(na), xloc = xloc.bar_time)
                     
-                    box.delete(bullSfp_sfpBox)
-                    for confBox in bullSfp_confBoxes
-                        box.delete(confBox)
-                    array.clear(bullSfp_confBoxes)
+                    if enableSfpAlerts
+                        alert(bullLabelText, alert.freq_once_per_bar_close)
+
+                    // --- STATISTICS HOOK ---
+                    if isChartOnSfpTF
+                        f_pushBullishSfpToStats(sfp_lt)
+                
+                else
+                    // B. ADD TO PENDING LIST (validation window > 0)
+                    PendingSFP newPendingSFP = PendingSFP.new()
+                    newPendingSFP.confBoxes := array.new_box() // *** FIX: Initialize the new array here.
+                    newPendingSFP.barCounter := 0
+                    newPendingSFP.lockedPivotPrice := pivot_price
+                    newPendingSFP.lockedPivotTime := pivot_time
+                    newPendingSFP.initialSfpBarTime := sfp_lt // Store SFP bar time for stats
+                    newPendingSFP.sfpChartBarTime := chartBarTimeToUse
+                    newPendingSFP.sfpExtremePrice := sfp_l // sfp_l is the extreme price for bullish
+                    newPendingSFP.sfpExtremeTime := sfp_lt_extreme_chart
+                    newPendingSFP.sfpBarOpen := sfp_o
+                    newPendingSFP.sfpBarClose := sfp_c
+                    newPendingSFP.sfpBarOppositePrice := sfp_h // sfp_h is the opposite for bullish
                     
                     if showSfpCandleBox and isChartTF_LT_sfpTF
-                        bullSfp_sfpBox := box.new(sfp_lt, sfp_h, sfp_lt + sfpTfMs - chartTfMs, sfp_l,
+                        newPendingSFP.sfpBox := box.new(sfp_lt, sfp_h, sfp_lt + sfpTfMs - chartTfMs, sfp_l,
                          bgcolor = bullSfpBarBoxColor, border_color = color(na), xloc = xloc.bar_time)
-
-                array.set(sfp_pivot_low_remove_flags, i, true) // Mark level as used
-                break // Stop checking levels
+                    
+                    array.push(pendingBullSFPs, newPendingSFP) // Add to our tracking list
+                
+                // Mark this pivot for removal so it doesn't get SFP'd again
+                array.set(sfp_pivot_low_remove_flags, i, true)
+                
+                // *** CRUCIAL: The 'break' statement is GONE ***
             
             else if sfp_c <= pivot_price
-                array.set(sfp_pivot_low_remove_flags, i, true) // Mark level as invalidated
+                // This pivot was not SFP'd, and price closed below it.
+                // Mark it for removal as it's no longer valid liquidity.
+                array.set(sfp_pivot_low_remove_flags, i, true)
 
-    // Clean up used/invalidated low levels
+    // This part remains the same:
     if array.size(sfp_pivot_low_prices) > 0
         for i = array.size(sfp_pivot_low_prices) - 1 to 0
             if array.get(sfp_pivot_low_remove_flags, i)
@@ -813,57 +839,63 @@ f_drawRow_Daily(tbl, row, index, name, howCounts, lowCounts, totalWeeks, maxHowC
     int lowVal = array.get(lowCounts, index)
     float howPct = (howVal / totalWeeks)*100
     float lowPct = (lowVal / totalWeeks) * 100
-    color howColor = color.from_gradient(howVal, 0.0, maxHowCount, color.new(color.teal, 90), color.new(color.teal, 30))
-    color lowColor = color.from_gradient(lowVal, 0.0, maxLowCount, color.new(color.red, 90), color.new(color.red, 30))
+    // *** FIX: Bearish (how) is RED, Bullish (low) is GREEN ***
+    color howColor = color.from_gradient(howVal, 0.0, maxHowCount, color.new(color.red, 90), color.new(color.red, 30))
+    color lowColor = color.from_gradient(lowVal, 0.0, maxLowCount, color.new(color.green, 90), color.new(color.green, 30))
     f_fillCell(tbl, 0, row, name, color.new(color.gray, 20), color.white, txtSize)
-    f_fillCell(tbl, 1, row, str.tostring(howVal), howColor, color.white, txtSize)
-    f_fillCell(tbl, 2, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
-    f_fillCell(tbl, 3, row, str.tostring(lowVal), lowColor, color.white, txtSize)
-    f_fillCell(tbl, 4, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    // *** SWAPPED COLUMNS ***
+    f_fillCell(tbl, 1, row, str.tostring(lowVal), lowColor, color.white, txtSize)
+    f_fillCell(tbl, 2, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    f_fillCell(tbl, 3, row, str.tostring(howVal), howColor, color.white, txtSize)
+    f_fillCell(tbl, 4, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
 
 // Custom table helper function
 f_drawRow_Custom_Merged(tbl, row, 
-     timeStrA, timeStrB,
-     howCounts, lowCounts, 
-     utcMinutes, 
-     totalPeriods, maxHOW, maxLOW, 
-     txtSize,
-     stdColor, dstColor) =>
+      timeStrA, timeStrB,
+      howCounts, lowCounts, 
+      utcMinutes, 
+      totalPeriods, maxHOW, maxLOW, 
+      txtSize,
+      stdColor, dstColor) =>
     int howVal = nz(howCounts.get(utcMinutes), 0) 
     int lowVal = nz(lowCounts.get(utcMinutes), 0) 
     float howPct = (howVal / totalPeriods) * 100 
     float lowPct = (lowVal / totalPeriods) * 100 
-    color howColor = color.from_gradient(howVal, 0.0, maxHOW, color.new(color.teal, 90), color.new(color.teal, 30)) 
-    color lowColor = color.from_gradient(lowVal, 0.0, maxLOW, color.new(color.red, 90), color.new(color.red, 30)) 
+    // *** FIX: Bearish (how) is RED, Bullish (low) is GREEN ***
+    color howColor = color.from_gradient(howVal, 0.0, maxHOW, color.new(color.red, 90), color.new(color.red, 30)) 
+    color lowColor = color.from_gradient(lowVal, 0.0, maxLOW, color.new(color.green, 90), color.new(color.green, 30)) 
     
     f_fillCell(tbl, 0, row, timeStrA, color.new(color.gray, 20), stdColor, txtSize)
     f_fillCell(tbl, 1, row, timeStrB, color.new(color.gray, 20), dstColor, txtSize)
-    f_fillCell(tbl, 2, row, str.tostring(howVal), howColor, color.white, txtSize) 
-    f_fillCell(tbl, 3, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
-    f_fillCell(tbl, 4, row, str.tostring(lowVal), lowColor, color.white, txtSize) 
-    f_fillCell(tbl, 5, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    // *** SWAPPED COLUMNS ***
+    f_fillCell(tbl, 2, row, str.tostring(lowVal), lowColor, color.white, txtSize) 
+    f_fillCell(tbl, 3, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    f_fillCell(tbl, 4, row, str.tostring(howVal), howColor, color.white, txtSize) 
+    f_fillCell(tbl, 5, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
 
 // Session table helper function
 f_drawRow_Session_Merged(tbl, row, 
-     timeStrA, timeStrB,
-     howCounts, lowCounts, 
-     utcMinutes, 
-     totalPeriods, maxHOW, maxLOW, 
-     txtSize,
-     stdColor, dstColor) =>
+      timeStrA, timeStrB,
+      howCounts, lowCounts, 
+      utcMinutes, 
+      totalPeriods, maxHOW, maxLOW, 
+      txtSize,
+      stdColor, dstColor) =>
     int howVal = nz(howCounts.get(utcMinutes), 0)
     int lowVal = nz(lowCounts.get(utcMinutes), 0)
     float howPct = (howVal / totalPeriods) * 100 
     float lowPct = (lowVal / totalPeriods) * 100 
-    color howColor = color.from_gradient(howVal, 0.0, maxHOW, color.new(color.teal, 90), color.new(color.teal, 30)) 
-    color lowColor = color.from_gradient(lowVal, 0.0, maxLOW, color.new(color.red, 90), color.new(color.red, 30)) 
+    // *** FIX: Bearish (how) is RED, Bullish (low) is GREEN ***
+    color howColor = color.from_gradient(howVal, 0.0, maxHOW, color.new(color.red, 90), color.new(color.red, 30)) 
+    color lowColor = color.from_gradient(lowVal, 0.0, maxLOW, color.new(color.green, 90), color.new(color.green, 30)) 
     
     f_fillCell(tbl, 0, row, timeStrA, color.new(color.gray, 20), stdColor, txtSize)
     f_fillCell(tbl, 1, row, timeStrB, color.new(color.gray, 20), dstColor, txtSize)
-    f_fillCell(tbl, 2, row, str.tostring(howVal), howColor, color.white, txtSize) 
-    f_fillCell(tbl, 3, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
-    f_fillCell(tbl, 4, row, str.tostring(lowVal), lowColor, color.white, txtSize) 
-    f_fillCell(tbl, 5, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    // *** SWAPPED COLUMNS ***
+    f_fillCell(tbl, 2, row, str.tostring(lowVal), lowColor, color.white, txtSize) 
+    f_fillCell(tbl, 3, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    f_fillCell(tbl, 4, row, str.tostring(howVal), howColor, color.white, txtSize) 
+    f_fillCell(tbl, 5, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
 
 // Monthly (WOM) table row
 f_drawRow_WOM(tbl, row, index, name, howCounts, lowCounts, totalMonths, maxHowCount, maxLowCount, txtSize) =>
@@ -871,13 +903,15 @@ f_drawRow_WOM(tbl, row, index, name, howCounts, lowCounts, totalMonths, maxHowCo
     int lowVal = array.get(lowCounts, index)
     float howPct = (howVal / totalMonths)*100
     float lowPct = (lowVal / totalMonths) * 100
-    color howColor = color.from_gradient(howVal, 0.0, maxHowCount, color.new(color.teal, 90), color.new(color.teal, 30)) 
-    color lowColor = color.from_gradient(lowVal, 0.0, maxLowCount, color.new(color.red, 90), color.new(color.red, 30)) 
+    // *** FIX: Bearish (how) is RED, Bullish (low) is GREEN ***
+    color howColor = color.from_gradient(howVal, 0.0, maxHowCount, color.new(color.red, 90), color.new(color.red, 30)) 
+    color lowColor = color.from_gradient(lowVal, 0.0, maxLowCount, color.new(color.green, 90), color.new(color.green, 30)) 
     f_fillCell(tbl, 0, row, name, color.new(color.gray, 20), color.white, txtSize)
-    f_fillCell(tbl, 1, row, str.tostring(howVal), howColor, color.white, txtSize)
-    f_fillCell(tbl, 2, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
-    f_fillCell(tbl, 3, row, str.tostring(lowVal), lowColor, color.white, txtSize)
-    f_fillCell(tbl, 4, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    // *** SWAPPED COLUMNS ***
+    f_fillCell(tbl, 1, row, str.tostring(lowVal), lowColor, color.white, txtSize)
+    f_fillCell(tbl, 2, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    f_fillCell(tbl, 3, row, str.tostring(howVal), howColor, color.white, txtSize)
+    f_fillCell(tbl, 4, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
 
 // Yearly (MOY) table row
 f_drawRow_MOY(tbl, row, index, name, howCounts, lowCounts, totalYears, maxHowCount, maxLowCount, txtSize) =>
@@ -885,13 +919,15 @@ f_drawRow_MOY(tbl, row, index, name, howCounts, lowCounts, totalYears, maxHowCou
     int lowVal = array.get(lowCounts, index)
     float howPct = (howVal / totalYears) * 100 
     float lowPct = (lowVal / totalYears) * 100
-    color howColor = color.from_gradient(howVal, 0.0, maxHowCount, color.new(color.teal, 90), color.new(color.teal, 30)) 
-    color lowColor = color.from_gradient(lowVal, 0.0, maxLowCount, color.new(color.red, 90), color.new(color.red, 30)) 
+    // *** FIX: Bearish (how) is RED, Bullish (low) is GREEN ***
+    color howColor = color.from_gradient(howVal, 0.0, maxHowCount, color.new(color.red, 90), color.new(color.red, 30)) 
+    color lowColor = color.from_gradient(lowVal, 0.0, maxLowCount, color.new(color.green, 90), color.new(color.green, 30)) 
     f_fillCell(tbl, 0, row, name, color.new(color.gray, 20), color.white, txtSize)
-    f_fillCell(tbl, 1, row, str.tostring(howVal), howColor, color.white, txtSize)
-    f_fillCell(tbl, 2, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
-    f_fillCell(tbl, 3, row, str.tostring(lowVal), lowColor, color.white, txtSize)
-    f_fillCell(tbl, 4, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    // *** SWAPPED COLUMNS ***
+    f_fillCell(tbl, 1, row, str.tostring(lowVal), lowColor, color.white, txtSize)
+    f_fillCell(tbl, 2, row, str.tostring(lowPct, "0.0") + "%", lowColor, color.white, txtSize)
+    f_fillCell(tbl, 3, row, str.tostring(howVal), howColor, color.white, txtSize)
+    f_fillCell(tbl, 4, row, str.tostring(howPct, "0.0") + "%", howColor, color.white, txtSize)
 
 
 // === DAILY TABLE DRAWING ===
@@ -916,11 +952,12 @@ if runDailyLogic and barstate.islast and i_showDailyTable
     table.merge_cells(t_D, 0, row_D, 4, row_D)
     row_D += 1
     
+    // *** SWAPPED HEADERS ***
     f_drawHeader(t_D, 0, row_D, "Day of Week", i_tableSize_D) 
-    f_drawHeader(t_D, 1, row_D, "Bearish SFP #", i_tableSize_D) 
-    f_drawHeader(t_D, 2, row_D, "Bearish SFP %", i_tableSize_D) 
-    f_drawHeader(t_D, 3, row_D, "Bullish SFP #", i_tableSize_D) 
-    f_drawHeader(t_D, 4, row_D, "Bullish SFP %", i_tableSize_D) 
+    f_drawHeader(t_D, 1, row_D, "Bullish SFP #", i_tableSize_D) 
+    f_drawHeader(t_D, 2, row_D, "Bullish SFP %", i_tableSize_D) 
+    f_drawHeader(t_D, 3, row_D, "Bearish SFP #", i_tableSize_D) 
+    f_drawHeader(t_D, 4, row_D, "Bearish SFP %", i_tableSize_D) 
     row_D += 1 
     
     if i_showSun
@@ -983,11 +1020,12 @@ if runWOMLogic and barstate.islast and i_showWOMTable
     table.merge_cells(t_WOM, 0, row_WOM, 4, row_WOM)
     row_WOM += 1
     
+    // *** SWAPPED HEADERS ***
     f_drawHeader(t_WOM, 0, row_WOM, "Week of Month", i_tableSize_WOM) 
-    f_drawHeader(t_WOM, 1, row_WOM, "Bearish SFP #", i_tableSize_WOM) 
-    f_drawHeader(t_WOM, 2, row_WOM, "Bearish SFP %", i_tableSize_WOM) 
-    f_drawHeader(t_WOM, 3, row_WOM, "Bullish SFP #", i_tableSize_WOM) 
-    f_drawHeader(t_WOM, 4, row_WOM, "Bullish SFP %", i_tableSize_WOM) 
+    f_drawHeader(t_WOM, 1, row_WOM, "Bullish SFP #", i_tableSize_WOM) 
+    f_drawHeader(t_WOM, 2, row_WOM, "Bullish SFP %", i_tableSize_WOM) 
+    f_drawHeader(t_WOM, 3, row_WOM, "Bearish SFP #", i_tableSize_WOM) 
+    f_drawHeader(t_WOM, 4, row_WOM, "Bearish SFP %", i_tableSize_WOM) 
     row_WOM += 1
 
     f_drawRow_WOM(t_WOM, row_WOM, 1, "Week 1", mohCounts, molCounts, totalMonths, maxMOH, maxMOL, i_tableSize_WOM)
@@ -1029,11 +1067,12 @@ if runMOYLogic and barstate.islast and i_showMOYTable
     table.merge_cells(t_MOY, 0, row_MOY, 4, row_MOY)
     row_MOY += 1
 
+    // *** SWAPPED HEADERS ***
     f_drawHeader(t_MOY, 0, row_MOY, "Month of Year", i_tableSize_MOY) 
-    f_drawHeader(t_MOY, 1, row_MOY, "Bearish SFP #", i_tableSize_MOY) 
-    f_drawHeader(t_MOY, 2, row_MOY, "Bearish SFP %", i_tableSize_MOY) 
-    f_drawHeader(t_MOY, 3, row_MOY, "Bullish SFP #", i_tableSize_MOY) 
-    f_drawHeader(t_MOY, 4, row_MOY, "Bullish SFP %", i_tableSize_MOY) 
+    f_drawHeader(t_MOY, 1, row_MOY, "Bullish SFP #", i_tableSize_MOY) 
+    f_drawHeader(t_MOY, 2, row_MOY, "Bullish SFP %", i_tableSize_MOY) 
+    f_drawHeader(t_MOY, 3, row_MOY, "Bearish SFP #", i_tableSize_MOY) 
+    f_drawHeader(t_MOY, 4, row_MOY, "Bearish SFP %", i_tableSize_MOY) 
     row_MOY += 1
 
     for i = 1 to 12
@@ -1126,12 +1165,13 @@ if runCustomLogic and barstate.islast and i_showCustomTable
     table.merge_cells(t_C, 0, row_C, 5, row_C) 
     row_C += 1
 
+    // *** SWAPPED HEADERS ***
     f_drawHeader(t_C, 0, row_C, stdStr_C, i_tableSize_C, stdColor_C) 
     f_drawHeader(t_C, 1, row_C, dstStr_C, i_tableSize_C, dstColor_C) 
-    f_drawHeader(t_C, 2, row_C, "Bearish SFP #", i_tableSize_C) 
-    f_drawHeader(t_C, 3, row_C, "Bearish SFP %", i_tableSize_C) 
-    f_drawHeader(t_C, 4, row_C, "Bullish SFP #", i_tableSize_C)
-    f_drawHeader(t_C, 5, row_C, "Bullish SFP %", i_tableSize_C)
+    f_drawHeader(t_C, 2, row_C, "Bullish SFP #", i_tableSize_C)
+    f_drawHeader(t_C, 3, row_C, "Bullish SFP %", i_tableSize_C)
+    f_drawHeader(t_C, 4, row_C, "Bearish SFP #", i_tableSize_C) 
+    f_drawHeader(t_C, 5, row_C, "Bearish SFP %", i_tableSize_C)
     row_C += 1
 
     for utcMinutesVal in sortedUtcMinutesToShow_C 
@@ -1234,12 +1274,13 @@ if runSessionLogic and i_showTable_S and barstate.islast
     table.merge_cells(t_S, 0, row_S, 5, row_S) 
     row_S += 1
 
+    // *** SWAPPED HEADERS ***
     f_drawHeader(t_S, 0, row_S, stdStr_S, i_tableSize_S, stdColor_S) 
     f_drawHeader(t_S, 1, row_S, dstStr_S, i_tableSize_S, dstColor_S) 
-    f_drawHeader(t_S, 2, row_S, "Bearish SFP #", i_tableSize_S) 
-    f_drawHeader(t_S, 3, row_S, "Bearish SFP %", i_tableSize_S) 
-    f_drawHeader(t_S, 4, row_S, "Bullish SFP #", i_tableSize_S)
-    f_drawHeader(t_S, 5, row_S, "Bullish SFP %", i_tableSize_S)
+    f_drawHeader(t_S, 2, row_S, "Bullish SFP #", i_tableSize_S)
+    f_drawHeader(t_S, 3, row_S, "Bullish SFP %", i_tableSize_S)
+    f_drawHeader(t_S, 4, row_S, "Bearish SFP #", i_tableSize_S) 
+    f_drawHeader(t_S, 5, row_S, "Bearish SFP %", i_tableSize_S)
     row_S += 1
 
     for utcMinutesVal in sortedUtcMinutesToShow_S 
@@ -1262,12 +1303,23 @@ if runSessionLogic and i_showTable_S and barstate.islast
     table.merge_cells(t_S, 0, row_S, 5, row_S)
 
 // === Warning Label ===
-if barstate.islast and not isChartOnSfpTF
+if barstate.islast and not isChartOnSfpTF and anyStatModuleEnabled
     var table warningTable = table.new(position.top_center, 1, 1, border_width = 2, border_color = color.red) 
     
     // Use the formatted strings for a clearer message
     string chartTfWarningStr = f_formatTimeframe(timeframe.period)
     string sfpTfWarningStr = f_formatTimeframe(sfpTimeframe)
     table.cell(warningTable, 0, 0, 
-     " SCRIPT PAUSED \n\n Chart Timeframe (" + chartTfWarningStr + ") \n MUST match \n SFP Timeframe (" + sfpTfWarningStr + ") \n\n Please update your chart's timeframe. ",
+     " STATISTICS PAUSED \n\n Chart Timeframe (" + chartTfWarningStr + ") \n MUST match \n SFP Timeframe (" + sfpTfWarningStr + ") \n\n SFP Engine will run, but statistics will not be collected. ",
+     bgcolor = color.new(color.red, 80), text_color = color.white, text_size = size.large)
+     
+// === NEW VISUALS WARNING LABEL ===
+if barstate.islast and isChartTF_GT_sfpTF
+    var table visualsWarningTable = table.new(position.middle_center, 1, 1, border_width = 2, border_color = color.red) 
+    
+    string chartTfWarningStr_viz = f_formatTimeframe(timeframe.period)
+    string sfpTfWarningStr_viz = f_formatTimeframe(sfpTimeframe)
+    
+    table.cell(visualsWarningTable, 0, 0, 
+     " SFP VISUALS DISABLED \n\n Chart Timeframe (" + chartTfWarningStr_viz + ") \n is higher than the SFP Timeframe (" + sfpTfWarningStr_viz + "). \n\n Please set the chart to " + sfpTfWarningStr_viz + " or lower. ",
      bgcolor = color.new(color.red, 80), text_color = color.white, text_size = size.large)
